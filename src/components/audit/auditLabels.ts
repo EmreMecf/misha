@@ -13,6 +13,10 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   "fiscal_period.reopen": "Mali dönem yeniden açıldı",
   "member.add": "Personel eklendi",
   "member.update": "Personel yetkisi değiştirildi",
+  "document.upload": "Belge yüklendi",
+  "document.review": "Belge kontrol edildi",
+  "document.reject": "Belge reddedildi",
+  "document.reprocess": "Belge yeniden işlemeye alındı",
 };
 
 export const auditLabel = (action: string) => AUDIT_ACTION_LABELS[action] ?? action;

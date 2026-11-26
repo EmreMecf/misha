@@ -23,7 +23,9 @@ export function proxy(request: NextRequest) {
   }
 
   response.headers.set("X-Content-Type-Options", "nosniff");
-  response.headers.set("X-Frame-Options", "DENY");
+  // Belge dosyası yalnızca kendi sayfamızdaki önizleme çerçevesinde açılabilir
+  const isDocumentFile = /^\/api\/v1\/documents\/[^/]+\/file$/.test(pathname);
+  response.headers.set("X-Frame-Options", isDocumentFile ? "SAMEORIGIN" : "DENY");
   response.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
   response.headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
   if (isApi) response.headers.set("Cache-Control", "no-store");

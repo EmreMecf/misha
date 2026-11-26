@@ -5,7 +5,7 @@ import { connection } from "next/server";
 import { AssignmentsPanel } from "@/components/taxpayers/AssignmentsPanel";
 import { FiscalPeriodsPanel } from "@/components/taxpayers/FiscalPeriodsPanel";
 import { EditTaxpayerForm } from "@/components/taxpayers/TaxpayerForm";
-import { Badge, Card, CardHeader, PageHeader } from "@/components/ui/primitives";
+import { Badge, buttonClass, Card, CardHeader, PageHeader } from "@/components/ui/primitives";
 import { AppError } from "@/server/errors";
 import { listMembers } from "@/server/tenancy/memberService";
 import { getPageContext } from "@/server/tenancy/pageContext";
@@ -46,7 +46,16 @@ async function TaxpayerDetail({ params }: { params: Promise<{ id: string }> }) {
       <PageHeader
         title={taxpayer.title}
         description={`${taxpayer.taxIdType} ${taxpayer.taxId}${taxpayer.taxOffice ? ` · ${taxpayer.taxOffice}` : ""}`}
-        action={taxpayer.status === "ACTIVE" ? <Badge tone="good">Aktif</Badge> : <Badge>Arşivde</Badge>}
+        action={
+          <div className="flex items-center gap-3">
+            {taxpayer.status === "ACTIVE" ? <Badge tone="good">Aktif</Badge> : <Badge>Arşivde</Badge>}
+            {can(ctx.role, "document:read") && (
+              <Link href={`/mukellefler/${taxpayer.id}/belgeler`} className={buttonClass.primary}>
+                Belgeler
+              </Link>
+            )}
+          </div>
+        }
       />
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">

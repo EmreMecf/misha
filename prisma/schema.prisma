@@ -107,12 +107,18 @@ model Organization {
   createdAt DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  branches          Branch[]
-  memberships       Membership[]
-  taxpayers         Taxpayer[]
-  taxpayerAssigns   TaxpayerAssignment[]
-  fiscalPeriods     FiscalPeriod[]
-  auditLogs         AuditLog[]
+  branches        Branch[]
+  memberships     Membership[]
+  taxpayers       Taxpayer[]
+  taxpayerAssigns TaxpayerAssignment[]
+  fiscalPeriods   FiscalPeriod[]
+  auditLogs       AuditLog[]
+  documents       Document[]
+  documentEvents  DocumentStatusEvent[]
+  extractions     DocumentExtraction[]
+  invoices        Invoice[]
+  invoiceLines    InvoiceLine[]
+  invoiceTaxes    InvoiceTax[]
 
   @@map("organizations")
 }
@@ -173,6 +179,8 @@ model Taxpayer {
   organization  Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   assignments   TaxpayerAssignment[]
   fiscalPeriods FiscalPeriod[]
+  documents     Document[]
+  invoices      Invoice[]
 
   @@unique([organizationId, taxId])
   @@index([organizationId, status])
@@ -209,6 +217,7 @@ model FiscalPeriod {
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   taxpayer     Taxpayer     @relation(fields: [taxpayerId], references: [id], onDelete: Cascade)
+  documents    Document[]
 
   @@unique([taxpayerId, name])
   @@index([taxpayerId, startDate])
@@ -232,4 +241,254 @@ model AuditLog {
 
   @@index([organizationId, createdAt])
   @@map("audit_logs")
+}
+
+// =====================================================================
+// Faz 2 — Belgeler
+// =====================================================================
+
+// Belge durum makinesi (geçişler: src/server/documents/stateMachine.ts)
+enum DocumentStatus {
+  UPLOADED
+  VALIDATING
+  QUEUED
+  CLASSIFYING
+  EXTRACTING
+  OCR_PROCESSING
+  AI_PROCESSING
+  VALIDATION_REQUIRED
+  ACCOUNTING_PENDING
+  NEEDS_REVIEW
+  APPROVED
+  EXPORT_PENDING
+  EXPORTING
+  EXPORTED
+  FAILED
+  DUPLICATE
+  REJECTED
+  ARCHIVED
+}
+
+// Dosya biçimi: içerik imzasından tespit edilir, uzantıya güvenilmez
+enum DocumentFormat {
+  XML
+  PDF
+  IMAGE
+  SPREADSHEET
+  CSV
+  ZIP
+  OTHER
+}
+
+// İş anlamında belge türü (sınıflandırmadan)
+enum DocumentType {
+  E_INVOICE
+  E_ARCHIVE_INVOICE
+  UNKNOWN
+}
+
+enum InvoiceDirection {
+  PURCHASE
+  SALE
+}
+
+model Document {
+  id                String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId    String            @map("organization_id") @db.Uuid
+  taxpayerId        String            @map("taxpayer_id") @db.Uuid
+  fiscalPeriodId    String?           @map("fiscal_period_id") @db.Uuid
+  // ZIP'ten çıkarılan belgenin kaynağı
+  parentDocumentId  String?           @map("parent_document_id") @db.Uuid
+  // Mükerrer yüklemede ilk (asıl) belge
+  duplicateOfId     String?           @map("duplicate_of_id") @db.Uuid
+  originalName      String            @map("original_name") @db.VarChar(255)
+  mimeType          String            @map("mime_type") @db.VarChar(100)
+  format            DocumentFormat
+  sizeBytes         Int               @map("size_bytes")
+  sha256            String            @db.Char(64)
+  storageKey        String?           @map("storage_key") @db.VarChar(300)
+  status            DocumentStatus    @default(UPLOADED)
+  statusReason      String?           @map("status_reason") @db.VarChar(500)
+  documentType      DocumentType      @default(UNKNOWN) @map("document_type")
+  direction         InvoiceDirection?
+  ettn              String?           @db.VarChar(36)
+  documentNo        String?           @map("document_no") @db.VarChar(50)
+  documentDate      DateTime?         @map("document_date") @db.Date
+  counterpartyTaxId String?           @map("counterparty_tax_id") @db.VarChar(11)
+  counterpartyName  String?           @map("counterparty_name") @db.VarChar(255)
+  payableAmount     Decimal?          @map("payable_amount") @db.Decimal(18, 2)
+  currency          String?           @db.Char(3)
+  uploadedBy        String?           @map("uploaded_by") @db.Uuid
+  version           Int               @default(1)
+  createdAt         DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  taxpayer     Taxpayer              @relation(fields: [taxpayerId], references: [id], onDelete: Cascade)
+  fiscalPeriod FiscalPeriod?         @relation(fields: [fiscalPeriodId], references: [id], onDelete: SetNull)
+  parent       Document?             @relation("DocumentChildren", fields: [parentDocumentId], references: [id], onDelete: SetNull)
+  children     Document[]            @relation("DocumentChildren")
+  duplicateOf  Document?             @relation("DocumentDuplicates", fields: [duplicateOfId], references: [id], onDelete: SetNull)
+  duplicates   Document[]            @relation("DocumentDuplicates")
+  events       DocumentStatusEvent[]
+  extractions  DocumentExtraction[]
+  invoice      Invoice?
+
+  @@index([taxpayerId, status])
+  @@index([taxpayerId, sha256])
+  @@index([taxpayerId, ettn])
+  @@index([organizationId, createdAt])
+  @@map("documents")
+}
+
+// Değiştirilemez durum geçmişi: kim (kullanıcı veya worker), ne zaman, neden
+model DocumentStatusEvent {
+  id             String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String          @map("organization_id") @db.Uuid
+  documentId     String          @map("document_id") @db.Uuid
+  fromStatus     DocumentStatus? @map("from_status")
+  toStatus       DocumentStatus  @map("to_status")
+  reason         String?         @db.VarChar(500)
+  actorUserId    String?         @map("actor_user_id") @db.Uuid
+  actorWorker    String?         @map("actor_worker") @db.VarChar(80)
+  createdAt      DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  document     Document     @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([documentId, createdAt])
+  @@map("document_status_events")
+}
+
+model DocumentExtraction {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  documentId     String   @map("document_id") @db.Uuid
+  parser         String   @db.VarChar(40) // ör. "ubl-tr"
+  parserVersion  String   @map("parser_version") @db.VarChar(20)
+  method         String   @db.VarChar(20) // XML_PARSER | PDF_TEXT | OCR | AI | MANUAL
+  // Yapılandırılmış çıktı ve alan bazında { value, source, method, confidence }
+  data           Json
+  fields         Json
+  // { errors: [...], warnings: [...] }
+  validation     Json
+  confidence     Decimal  @db.Decimal(4, 3)
+  isCurrent      Boolean  @default(true) @map("is_current")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  document     Document     @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  invoice      Invoice?
+
+  @@index([documentId, isCurrent])
+  @@map("document_extractions")
+}
+
+model Invoice {
+  id                  String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId      String           @map("organization_id") @db.Uuid
+  taxpayerId          String           @map("taxpayer_id") @db.Uuid
+  documentId          String           @unique @map("document_id") @db.Uuid
+  extractionId        String           @unique @map("extraction_id") @db.Uuid
+  direction           InvoiceDirection
+  profileId           String           @map("profile_id") @db.VarChar(40)
+  invoiceTypeCode     String           @map("invoice_type_code") @db.VarChar(40)
+  invoiceNo           String           @map("invoice_no") @db.VarChar(50)
+  ettn                String           @db.VarChar(36)
+  issueDate           DateTime         @map("issue_date") @db.Date
+  currency            String           @db.Char(3)
+  exchangeRate        Decimal?         @map("exchange_rate") @db.Decimal(18, 6)
+  supplierTaxId       String?          @map("supplier_tax_id") @db.VarChar(11)
+  supplierName        String?          @map("supplier_name") @db.VarChar(255)
+  customerTaxId       String?          @map("customer_tax_id") @db.VarChar(11)
+  customerName        String?          @map("customer_name") @db.VarChar(255)
+  lineExtensionAmount Decimal          @map("line_extension_amount") @db.Decimal(18, 2)
+  allowanceTotal      Decimal          @default(0) @map("allowance_total") @db.Decimal(18, 2)
+  taxExclusiveAmount  Decimal          @map("tax_exclusive_amount") @db.Decimal(18, 2)
+  taxInclusiveAmount  Decimal          @map("tax_inclusive_amount") @db.Decimal(18, 2)
+  withholdingTotal    Decimal          @default(0) @map("withholding_total") @db.Decimal(18, 2)
+  payableAmount       Decimal          @map("payable_amount") @db.Decimal(18, 2)
+  createdAt           DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  taxpayer     Taxpayer           @relation(fields: [taxpayerId], references: [id], onDelete: Cascade)
+  document     Document           @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  extraction   DocumentExtraction @relation(fields: [extractionId], references: [id], onDelete: Cascade)
+  lines        InvoiceLine[]
+  taxes        InvoiceTax[]
+
+  @@index([taxpayerId, issueDate])
+  @@map("invoices")
+}
+
+model InvoiceLine {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  invoiceId      String   @map("invoice_id") @db.Uuid
+  lineNo         Int      @map("line_no")
+  name           String   @db.VarChar(500)
+  stockCode      String?  @map("stock_code") @db.VarChar(100)
+  quantity       Decimal  @db.Decimal(18, 4)
+  unitCode       String?  @map("unit_code") @db.VarChar(10)
+  unitPrice      Decimal? @map("unit_price") @db.Decimal(21, 8)
+  discountAmount Decimal  @default(0) @map("discount_amount") @db.Decimal(18, 2)
+  lineAmount     Decimal  @map("line_amount") @db.Decimal(18, 2)
+  vatRate        Decimal  @map("vat_rate") @db.Decimal(5, 2)
+  vatAmount      Decimal  @default(0) @map("vat_amount") @db.Decimal(18, 2)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  invoice      Invoice      @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@unique([invoiceId, lineNo])
+  @@map("invoice_lines")
+}
+
+model InvoiceTax {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  invoiceId      String   @map("invoice_id") @db.Uuid
+  taxTypeCode    String?  @map("tax_type_code") @db.VarChar(10) // 0015 = KDV
+  taxName        String   @map("tax_name") @db.VarChar(100)
+  rate           Decimal? @db.Decimal(5, 2)
+  taxableAmount  Decimal  @map("taxable_amount") @db.Decimal(18, 2)
+  taxAmount      Decimal  @map("tax_amount") @db.Decimal(18, 2)
+  isWithholding  Boolean  @default(false) @map("is_withholding")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  invoice      Invoice      @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@index([invoiceId])
+  @@map("invoice_taxes")
+}
+
+// =====================================================================
+// Arka plan iş kuyruğu: kiracı dışı sistem tablosu; worker her iş için ofis bağlamı açar
+// =====================================================================
+
+enum JobStatus {
+  PENDING
+  RUNNING
+  SUCCEEDED
+  DEAD
+}
+
+model Job {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  type           String    @db.VarChar(60)
+  // Aynı işin ikinci kez kuyruğa alınmasını engeller (ör. "document.process:<id>")
+  idempotencyKey String    @unique @map("idempotency_key") @db.VarChar(200)
+  payload        Json
+  status         JobStatus @default(PENDING)
+  attempts       Int       @default(0)
+  maxAttempts    Int       @default(3) @map("max_attempts")
+  runAfter       DateTime  @default(now()) @map("run_after") @db.Timestamptz(6)
+  lockedAt       DateTime? @map("locked_at") @db.Timestamptz(6)
+  lockedBy       String?   @map("locked_by") @db.VarChar(80)
+  lastError      String?   @map("last_error") @db.VarChar(2000)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([status, runAfter])
+  @@map("jobs")
 }

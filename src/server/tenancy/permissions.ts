@@ -12,6 +12,9 @@ export const PERMISSIONS = [
   "member:manage",
   "audit:read",
   "organization:manage",
+  "document:read",
+  "document:upload",
+  "document:review",
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -29,11 +32,15 @@ export const ROLE_PERMISSIONS: Readonly<Record<Role, ReadonlySet<Permission>>> =
     "period:manage",
     "member:read",
     "audit:read",
+    "document:read",
+    "document:upload",
+    "document:review",
   ]),
-  STAFF: new Set(["taxpayer:read", "period:read"]),
-  AUDITOR: new Set(["taxpayer:read", "period:read", "member:read", "audit:read"]),
-  TAXPAYER_USER: new Set(["taxpayer:read", "period:read"]),
-  READ_ONLY: new Set(["taxpayer:read", "period:read"]),
+  STAFF: new Set(["taxpayer:read", "period:read", "document:read", "document:upload", "document:review"]),
+  AUDITOR: new Set(["taxpayer:read", "period:read", "member:read", "audit:read", "document:read"]),
+  // Mükellef kendi belgelerini yükleyip görebilir; kontrol/onay ofisin işidir
+  TAXPAYER_USER: new Set(["taxpayer:read", "period:read", "document:read", "document:upload"]),
+  READ_ONLY: new Set(["taxpayer:read", "period:read", "document:read"]),
 };
 
 /** Bu roller ofisin tüm mükelleflerini görür; diğerleri yalnızca atandıklarını. */

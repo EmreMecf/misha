@@ -4,7 +4,8 @@ Bağlam yenilendiğinde buradan devam edin. En son kayıt en üstte.
 
 ## Açık kararlar (kullanıcı)
 
-- **Uzak yedek**: Depo yalnızca bu bilgisayarda (OneDrive klasörü). Özel bir GitHub deposuna push önerilir — eski proje bu yüzden geri getirilemedi. CI iş akışı (`.github/workflows/ci.yml`) push sonrası çalışır.
+- **Uzak yedek**: TAMAM — https://github.com/EmreMecf/misha (kullanıcı onayıyla herkese açık). Push için `env -u GH_TOKEN -u GITHUB_TOKEN git push` (ortamdaki GH_TOKEN geçersiz).
+- **OCR / yapay zekâ sağlayıcısı (Faz 2 devamı / Faz 3)**: PDF ve görsel belgelerin okunması için ücretli bir servis (ör. Claude API) gerekir; belge içeriği dış servise gider. Kullanıcı onayı ve API anahtarı gerektirir.
 - **Node.js 22 LTS'ye yükseltme**: Prisma 7.10.1+ ve Vitest 5'e geçişi açar; bağımlılık denetimindeki 4 yüksek bulguyu kapatır. Sistem değişikliği olduğu için kullanıcı yapar.
 - **Masaüstü kabuğu**: Ofiste çok bilgisayarlı kullanım istendi (2026-11-26). Web uygulaması ileride Electron ile sarılacak; ağ üzerinden kullanımda giriş sistemi artık hazır.
 - **Eski veritabanı**: Eski projenin `mihsap-postgres` konteyneri (port 5433) ve verisi duruyor; yeni sisteme taşınmadı, dokunulmadı.
@@ -14,17 +15,30 @@ Bağlam yenilendiğinde buradan devam edin. En son kayıt en üstte.
 | Faz | Durum | Not |
 |---|---|---|
 | 0 | COMPLETE | 13 doküman; eski depo kaybı kayıtlı |
-| 1 | PARTIAL | Kimlik, RBAC, RLS, mükellef, mali dönem, personel, denetim kaydı tamam. Eksik: şube yönetim ekranı, iş kuyruğu ve dosya depolama (Faz 2 ile birlikte), 2FA |
-| 2–9 | MISSING | |
+| 1 | PARTIAL | Kimlik, RBAC, RLS, mükellef, mali dönem, personel, denetim kaydı, iş kuyruğu, dosya depolama tamam. Eksik: şube yönetim ekranı, 2FA |
+| 2 | PARTIAL | Yükleme (çoklu/ZIP), güvenlik kontrolleri, mükerrer tespiti, durum makinesi, iş kuyruğu, UBL-TR e-Fatura/e-Arşiv XML okuma + doğrulama, kontrol ekranı tamam. Eksik: PDF metin çıkarma, OCR, AI sınıflandırma, Excel/CSV banka ekstresi okuma, elle alan düzeltme |
+| 3–9 | MISSING | |
 
 ## Bilinen eksikler
 
 - `npm audit`: Prisma 6.19 CLI'nin yapılandırma katmanında 4 yüksek bulgu (`deepmerge-ts` <8, `effect` ≤3.22). Çalışma zamanı istek yolunda değil. Çözüm: Node 22 + Prisma 7.10.1+. **CI'daki `npm audit --audit-level=high` adımı bu düzeltilene kadar başarısız olur** (eşik bilinçli olarak düşürülmedi).
 - 2FA, CSP nonce, genel hız sınırlayıcı: Faz 9.
 - Şubeler veri modelinde var, yönetim ekranı yok.
-- Uçtan uca (Playwright) testler yok; arayüz akışı elle tarayıcıda doğrulandı (kayıt → mükellef → dönem → işlem geçmişi).
+- Uçtan uca (Playwright) testler yok; arayüz akışı elle tarayıcıda doğrulandı (kayıt → mükellef → dönem → işlem geçmişi; belge yükleme → kontrol → onay; PDF önizleme).
+- PDF / görsel / Excel belgeler saklanır ama okunmaz: "Düzeltme gerekli" durumuna düşer ve nedeni açıkça yazılır. Okunan alanlar henüz elle düzeltilemez (yalnızca kontrol edildi / reddet / yeniden işle).
+- Dosyalar yerel diskte (`STORAGE_DIR`, varsayılan `./storage`, git dışında). Çok bilgisayarlı kurulumda paylaşılan bir konum veya nesne deposu gerekecek.
+- Varsayılan olarak işler istek sonrasında (`after()`) aynı süreçte çalışır; yük artınca `INLINE_JOBS=false` + `npm run worker`.
+- `jobs` tablosunda uygulama rolünün silme izni yok (kuyruk geçmişi korunur); eski işlerin temizliği için ileride yönetici görevi gerekir.
 
 ## Kayıt
+
+### 2026-11-26 — Faz 2 belge zekâsı (XML kısmı)
+- Veri modeli: `documents`, `document_status_events` (değiştirilemez), `document_extractions` (alan başına kaynak/yöntem/güven), `invoices`, `invoice_lines`, `invoice_taxes`, `jobs`. Hepsi RLS altında (jobs hariç: kiracıdan bağımsız kuyruk). Mükerrer için kısmi tekil indeksler (SHA-256 ve ETTN).
+- Güvenlik: içerik imzasıyla biçim tespiti (uzantı uyuşmazlığı ret), HTML ret, ZIP yol geçişi / iç içe ZIP / zip bombası koruması, DTD/ENTITY içeren XML ret, gömülü XSLT çalıştırılmaz. Dosya yanıtı: PDF için `object-src 'self'`, diğerleri `sandbox` CSP, yalnız aynı kökenden çerçeve.
+- Durum makinesi: 18 durum, iyimser sürüm kontrolü, her geçiş olay kaydı. İş kuyruğu: `FOR UPDATE SKIP LOCKED`, idempotency anahtarı, üstel bekleme, DEAD, takılı kilit geri alma.
+- UBL-TR ayrıştırıcı + doğrulama (kalem toplamı, KDV hesabı, ödenecek tutar, tevkifat, döviz kuru, VKN/TCKN kontrol basamağı), yön tespiti (alış/satış/başkasına ait → ret), açık mali dönem eşleştirme.
+- Arayüz: mükellef → Belgeler (sürükle-bırak yükleme, durum süzgeçleri, otomatik yenileme), belge kontrol ekranı (önizleme, okunan alanlar, doğrulama, kalemler, vergiler, durum geçmişi, onay/ret/yeniden işle).
+- Testler: 22 birim + 24 entegrasyon (yükleme hattı, mükerrer, ZIP, dönem yokken düzeltme ve yeniden işleme, idempotency, retry → DEAD, belge izolasyonu, değiştirilemez durum geçmişi).
 
 ### 2026-11-26 — Faz 1 çekirdek
 - PostgreSQL 17 (Docker `mihsap-platform-db`, port 5434). Kısıtlı uygulama rolü `mihsap_app` (süper kullanıcı değil, RLS'yi atlayamaz); migration'lar `mihsap_admin` ile.
