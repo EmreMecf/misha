@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: mihsap
+          POSTGRES_USER: mihsap_admin
+          POSTGRES_PASSWORD: ci_admin
+        ports: ["5434:5432"]
+        options: >-
+          --health-cmd "pg_isready -U mihsap_admin -d mihsap"
+          --health-interval 3s --health-timeout 3s --health-retries 20
+    env:
+      DATABASE_URL: postgresql://mihsap_app:ci_app@localhost:5434/mihsap?schema=public
+      DIRECT_DATABASE_URL: postgresql://mihsap_admin:ci_admin@localhost:5434/mihsap?schema=public
+      APP_ORIGIN: http://localhost:3000
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20.18.1"
+          cache: npm
+      - run: npm ci
+      - name: Uygulama rolü (RLS'ye tabi, süper kullanıcı değil)
+        run: |
+          PGPASSWORD=ci_admin psql -h localhost -p 5434 -U mihsap_admin -d mihsap -v ON_ERROR_STOP=1 \
+            -c "CREATE ROLE mihsap_app LOGIN PASSWORD 'ci_app' NOSUPERUSER NOBYPASSRLS;" \
+            -c "GRANT CONNECT ON DATABASE mihsap TO mihsap_app;" \
+            -c "GRANT USAGE ON SCHEMA public TO mihsap_app;"
+      - run: npx prisma migrate deploy
+      # Şema ile uygulanmış migration'lar arasında fark yoksa 0 döner (salt okunur karşılaştırma)
+      - name: Migration kayması kontrolü
+        run: npx prisma migrate diff --from-url "$DIRECT_DATABASE_URL" --to-schema-datamodel prisma/schema.prisma --exit-code
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run test:integration
+      - run: npm run build
+      - run: npm audit --omit=dev --audit-level=high

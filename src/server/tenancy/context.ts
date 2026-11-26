@@ -13,6 +13,8 @@ export interface RequestContext {
   organizationId: string;
   membershipId: string;
   role: Role;
+  /** Geçici parolayla girildi: parola değiştirilene kadar yalnızca parola değişimi ve çıkış yapılabilir. */
+  mustChangePassword: boolean;
   ipAddress: string | null;
 }
 
@@ -39,6 +41,7 @@ export async function resolveContext(token: string | null | undefined, ipAddress
     organizationId,
     membershipId: membership.id,
     role: membership.role,
+    mustChangePassword: session.user.mustChangePassword,
     ipAddress,
   };
 }

@@ -1,26 +1,87 @@
 @import "tailwindcss";
 
+/* Anlamsal renk token'ları: bileşenler yalnızca bunları kullanır (docs/UI_UX_SYSTEM.md). */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --canvas: #f4f6f5;
+  --surface: #ffffff;
+  --surface-2: #eef1f0;
+  --line: #dde3e0;
+  --line-strong: #c3ccc8;
+  --ink: #15201c;
+  --ink-2: #47564f;
+  --ink-3: #75837c;
+  --brand: #0f6b55;
+  --brand-hover: #0b5a47;
+  --brand-soft: #e1f0eb;
+  --brand-ink: #0b4b3c;
+  --good: #1f7a4a;
+  --good-soft: #e2f2e8;
+  --warning: #9a6200;
+  --warning-soft: #fbf0d6;
+  --critical: #b3362c;
+  --critical-soft: #f9e3e0;
+  color-scheme: light;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --canvas: #0d1210;
+    --surface: #141b18;
+    --surface-2: #1b2420;
+    --line: #26322d;
+    --line-strong: #34433c;
+    --ink: #e4ebe8;
+    --ink-2: #a5b3ad;
+    --ink-3: #78877f;
+    --brand: #4cc29f;
+    --brand-hover: #63d1b0;
+    --brand-soft: #143a30;
+    --brand-ink: #9fe3cd;
+    --good: #67cf95;
+    --good-soft: #15321f;
+    --warning: #e6b65a;
+    --warning-soft: #36290f;
+    --critical: #ef8a80;
+    --critical-soft: #3a1b18;
+    color-scheme: dark;
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+@theme inline {
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-brand: var(--brand);
+  --color-brand-hover: var(--brand-hover);
+  --color-brand-soft: var(--brand-soft);
+  --color-brand-ink: var(--brand-ink);
+  --color-good: var(--good);
+  --color-good-soft: var(--good-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-critical: var(--critical);
+  --color-critical-soft: var(--critical-soft);
+  --font-sans: var(--font-plex-sans), system-ui, sans-serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, monospace;
+}
+
+@layer base {
+  body {
+    background: var(--canvas);
+    color: var(--ink);
+    font-family: var(--font-sans);
+  }
+  :focus-visible {
+    outline: 2px solid var(--brand);
+    outline-offset: 2px;
+  }
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--line-strong) transparent;
+  }
 }
