@@ -206,7 +206,7 @@ export const postSchema = z.object({
   saveRule: z.boolean().default(false),
 });
 
-async function nextEntryNo(tx: Tx, fiscalPeriodId: string) {
+export async function nextEntryNo(tx: Tx, fiscalPeriodId: string) {
   // Dönem satırını kilitleyerek numaraları sıraya sok (eşzamanlı kesinleştirmede boşluk/çakışma olmaz)
   await tx.$queryRaw`SELECT id FROM fiscal_periods WHERE id = ${fiscalPeriodId}::uuid FOR UPDATE`;
   const last = await tx.journalEntry.aggregate({ where: { fiscalPeriodId }, _max: { entryNo: true } });
@@ -348,6 +348,11 @@ export async function reverseEntry(ctx: RequestContext, entryId: string, input: 
     const entryNo = await nextEntryNo(tx, entry.fiscalPeriodId);
     await tx.journalEntry.update({ where: { id: reversal.id }, data: { status: "POSTED", entryNo, postedBy: ctx.userId, postedAt: new Date() } });
     await tx.journalEntry.update({ where: { id: entry.id }, data: { status: "REVERSED" } });
+    // Banka hareketinden oluşan fiş iptal edildiyse hareket yeniden eşleşme bekler
+    await tx.bankTransaction.updateMany({
+      where: { journalEntryId: entry.id },
+      data: { status: "UNMATCHED", journalEntryId: null, matchedDocumentId: null, matchReason: null, matchedBy: null, matchedAt: null },
+    });
 
     let proposal: ProposeOutcome | null = null;
     if (entry.documentId) {
@@ -398,3 +403,67 @@ export async function listJournal(ctx: RequestContext, taxpayerId: string, input
 }
 
 export type JournalFinding = Finding;
+
+export interface PostedLineInput {
+  accountId: string;
+  kind: "BANK" | "COUNTERPARTY" | "MAIN";
+  debit: Decimal;
+  credit: Decimal;
+  description: string;
+  source: string;
+  reason: string;
+}
+
+/**
+ * Doğrudan kesin fiş oluşturur (taslak → satırlar → numara → POSTED). Banka mutabakatı gibi
+ * kullanıcının tek tıkla onayladığı kayıtlar için. Denge ve dönem kuralları tetikleyicide de denetlenir.
+ */
+export async function createPostedEntry(
+  tx: Tx,
+  ctx: RequestContext,
+  input: {
+    taxpayerId: string;
+    fiscalPeriodId: string;
+    entryDate: Date;
+    description: string;
+    source: "BANK" | "MANUAL";
+    direction?: InvoiceDirection | null;
+    counterpartyTaxId?: string | null;
+    counterpartyName?: string | null;
+    documentId?: string | null;
+    lines: PostedLineInput[];
+  },
+) {
+  const entry = await tx.journalEntry.create({
+    data: {
+      organizationId: ctx.organizationId,
+      taxpayerId: input.taxpayerId,
+      fiscalPeriodId: input.fiscalPeriodId,
+      entryDate: input.entryDate,
+      description: input.description.slice(0, 500),
+      source: input.source,
+      direction: input.direction ?? null,
+      counterpartyTaxId: input.counterpartyTaxId ?? null,
+      counterpartyName: input.counterpartyName ?? null,
+      createdBy: ctx.userId,
+      lines: {
+        create: input.lines.map((l, i) => ({
+          organizationId: ctx.organizationId,
+          lineNo: i + 1,
+          accountId: l.accountId,
+          proposedAccountId: l.accountId,
+          kind: l.kind,
+          debit: l.debit.toFixed(2),
+          credit: l.credit.toFixed(2),
+          description: l.description.slice(0, 300),
+          source: l.source,
+          reason: l.reason.slice(0, 500),
+        })),
+      },
+    },
+  });
+  assertPostable(input.lines.map((l) => ({ accountId: l.accountId, debit: new Prisma.Decimal(l.debit.toFixed(2)), credit: new Prisma.Decimal(l.credit.toFixed(2)) })));
+  const entryNo = await nextEntryNo(tx, input.fiscalPeriodId);
+  await tx.journalEntry.update({ where: { id: entry.id }, data: { status: "POSTED", entryNo, postedBy: ctx.userId, postedAt: new Date() } });
+  return { id: entry.id, entryNo };
+}

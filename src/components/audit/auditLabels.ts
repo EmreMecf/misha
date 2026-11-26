@@ -26,6 +26,14 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   "journal.propose": "Fiş önerildi",
   "journal.post": "Fiş kesinleşti",
   "journal.reverse": "Fiş ters kayıtla iptal edildi",
+  "bank.account_create": "Banka hesabı eklendi",
+  "bank.import": "Banka ekstresi aktarıldı",
+  "bank.match": "Banka hareketi faturayla eşleşti",
+  "bank.classify": "Banka hareketi hesaba işlendi",
+  "bank.ignore": "Banka hareketi yok sayıldı",
+  "bank.unignore": "Banka hareketi yeniden bekliyor",
+  "bank.rule_enable": "Banka kuralı açıldı",
+  "bank.rule_disable": "Banka kuralı kapatıldı",
 };
 
 export const auditLabel = (action: string) => AUDIT_ACTION_LABELS[action] ?? action;

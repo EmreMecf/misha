@@ -19,6 +19,9 @@ export const PERMISSIONS = [
   "ledger:manage",
   "journal:edit",
   "journal:post",
+  "bank:read",
+  "bank:import",
+  "bank:manage",
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -43,13 +46,16 @@ export const ROLE_PERMISSIONS: Readonly<Record<Role, ReadonlySet<Permission>>> =
     "ledger:manage",
     "journal:edit",
     "journal:post",
+    "bank:read",
+    "bank:import",
+    "bank:manage",
   ]),
   // Personel fiş önerisini düzenler; kesinleştirme ve hesap planı mali müşavirin işidir
-  STAFF: new Set(["taxpayer:read", "period:read", "document:read", "document:upload", "document:review", "ledger:read", "journal:edit"]),
-  AUDITOR: new Set(["taxpayer:read", "period:read", "member:read", "audit:read", "document:read", "ledger:read"]),
+  STAFF: new Set(["taxpayer:read", "period:read", "document:read", "document:upload", "document:review", "ledger:read", "journal:edit", "bank:read", "bank:import"]),
+  AUDITOR: new Set(["taxpayer:read", "period:read", "member:read", "audit:read", "document:read", "ledger:read", "bank:read"]),
   // Mükellef kendi belgelerini yükleyip görebilir; kontrol/onay ofisin işidir
   TAXPAYER_USER: new Set(["taxpayer:read", "period:read", "document:read", "document:upload"]),
-  READ_ONLY: new Set(["taxpayer:read", "period:read", "document:read", "ledger:read"]),
+  READ_ONLY: new Set(["taxpayer:read", "period:read", "document:read", "ledger:read", "bank:read"]),
 };
 
 /** Bu roller ofisin tüm mükelleflerini görür; diğerleri yalnızca atandıklarını. */

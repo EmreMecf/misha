@@ -59,6 +59,11 @@ async function TaxpayerDetail({ params }: { params: Promise<{ id: string }> }) {
                 </Link>
               </>
             )}
+            {can(ctx.role, "bank:read") && (
+              <Link href={`/mukellefler/${taxpayer.id}/banka`} className={buttonClass.secondary}>
+                Banka
+              </Link>
+            )}
             {can(ctx.role, "document:read") && (
               <Link href={`/mukellefler/${taxpayer.id}/belgeler`} className={buttonClass.primary}>
                 Belgeler

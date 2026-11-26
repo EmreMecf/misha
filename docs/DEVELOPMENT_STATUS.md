@@ -19,7 +19,8 @@ Bağlam yenilendiğinde buradan devam edin. En son kayıt en üstte.
 | 1 | PARTIAL | Kimlik, RBAC, RLS, mükellef, mali dönem, personel, denetim kaydı, iş kuyruğu, dosya depolama tamam. Eksik: şube yönetim ekranı, 2FA |
 | 2 | PARTIAL | Yükleme (çoklu/ZIP), güvenlik kontrolleri, mükerrer tespiti, durum makinesi, iş kuyruğu, UBL-TR e-Fatura/e-Arşiv XML okuma + doğrulama, kontrol ekranı tamam. Eksik: PDF metin çıkarma, OCR, AI sınıflandırma, Excel/CSV banka ekstresi okuma, elle alan düzeltme |
 | 3 | PARTIAL | Mükellef hesap planı (TDHP şablonu + alt hesap), hesap rolleri, kural önceliği (kesin kural → geçmiş onay → rol), gerekçeli fiş önerisi, onay/kesinleştirme, ters kayıt, düzeltmeden öğrenme, yevmiye listesi tamam. Eksik: elle fiş / satır tutarı düzenleme, ürün sınıflandırma ve benzer belge katmanları, AI önerisi (Faz 7), muavin/mizan raporları |
-| 4–9 | MISSING | |
+| 4 | PARTIAL | Banka hesabı (IBAN doğrulama, defter hesabı), CSV/XLSX ekstre aktarımı (bankadan bağımsız sütun eşleme + önizleme), satır satır bakiye kontrolü ve süreklilik uyarısı, mükerrer aktarım engeli, gerekçeli eşleştirme önerisi (fatura / anahtar kelime kuralı), onayla fiş kesme, ters kayıtla geri alma, kural öğrenme tamam. Eksik: PDF ekstre, kısmi/toplu ödeme eşleştirme, döviz hesap, toplu onay, AI sınıflandırma |
+| 5–9 | MISSING | |
 
 ## Bilinen eksikler
 
@@ -32,9 +33,21 @@ Bağlam yenilendiğinde buradan devam edin. En son kayıt en üstte.
 - Varsayılan olarak işler istek sonrasında (`after()`) aynı süreçte çalışır; yük artınca `INLINE_JOBS=false` + `npm run worker`.
 - Fiş satır tutarları düzenlenemez (faturadan gelir). Toplamları tutarsız fatura dengesiz öneri üretir ve kesinleşemez; çözüm belgeyi reddetmek. Elle fiş girişi sonraki adım.
 - Döviz faturasında satır bazlı TL yuvarlaması kuruş farkı doğurursa fiş dengesiz işaretlenir; kuruş farkının otomatik dağıtımı Faz 5 vergi/yuvarlama kurallarıyla gelecek.
+- Banka eşleştirmesi yalnızca tutarı faturanın ödenecek tutarına birebir eşit hareketlerde fatura önerir (kısmi, toplu ve taksitli ödemeler sonraki adım). Döviz banka hesapları "geliştirme aşamasında" (yalnız TL).
+- Banka ekstresinde "Borç" çıkış, "Alacak" giriş kabul edilir (Türk bankalarının yaygın kullanımı); farklıysa önizlemede "işareti ters çevir" seçilir. Hiçbir banka biçimi gerçek ekstreyle doğrulanmadı; sentetik örneklerle test edildi.
 - `jobs` tablosunda uygulama rolünün silme izni yok (kuyruk geçmişi korunur); eski işlerin temizliği için ileride yönetici görevi gerekir.
 
 ## Kayıt
+
+### 2026-11-27 — Faz 4 banka ekstresi ve mutabakat (çekirdek)
+- Veri modeli: `bank_accounts`, `bank_statements` (dosya SHA-256 tekil), `bank_transactions` (parmak izi tekil, işaretli tutar), `bank_rules`. RLS; ekstre/hareket satırları silinemez, hareketin ekstre verisi tetikleyiciyle değiştirilemez; bir fatura tek harekete bağlanabilir (kısmi tekil indeks). Fiş kaynağına `BANK`, satır türüne `BANK` eklendi (kısıt yeniden tanımlandı, veri korunarak).
+- Ayrıştırıcı (`statementParser.ts`, saf): CSV (ayraç tespiti, tırnak, UTF-8/Windows-1254), XLSX (fflate + fast-xml-parser; yeni bağımlılık yok, DTD reddi, boyut sınırı), başlık satırı ve sütun tahmini, Türkçe/İngilizce sayı biçimleri, Excel tarih seri numarası, ara toplam satırlarını atlama. Bakiye kontrolü sırayı (eski→yeni / yeni→eski) bakiyeden anlar.
+- Mükerrer: dosya içi sıra numaralı parmak izi — aynı dosya ikinci kez reddedilir, çakışan ekstrelerde aynı hareketler atlanır, aynı gün aynı tutarlı gerçek hareketler ayrışır.
+- Eşleştirme (`matchEngine.ts`, saf): tutar eşitliği zorunlu; fatura no, VKN, karşı taraf adı, tarih yakınlığı puanlanır ve gerekçe olarak yazılır; belirsizlikte öneri yapılmaz. Fatura yoksa en uzun anahtar kelime kuralı.
+- Mutabakat: fatura eşleşmesi faturanın fişindeki cari hesabı kullanır (ödeme 320 B / 102 A, tahsilat 102 B / 120 A); hesaba işleme istenirse kural öğrenir. Fiş iptal edilirse hareket yeniden bekler. Kesinleştirme `journal:post`; personel ekstre aktarıp yok sayabilir.
+- Arayüz: mükellef → Banka (hesaplar), hesap sayfası (ekstre aktar + eşleme önizleme, hareketler + öneriler, ekstreler, kurallar).
+- Düzeltme migration'ı `20261127091000_bank_trigger_fix`: tetikleyici fonksiyonu tabloda olmayan alana eriştiği için jsonb ile yeniden yazıldı (önceki migration değiştirilmedi).
+- Testler: 18 birim (ayrıştırıcı 10, eşleştirme 8) + 10 entegrasyon. Tarayıcıda sentetik ekstreyle uçtan uca doğrulandı.
 
 ### 2026-11-26 — Faz 3 muhasebe motoru (çekirdek)
 - Veri modeli: `ledger_accounts` (mükellefe özel, kod biçimi CHECK), `account_role_mappings`, `posting_rules` (karşı taraf + yön → hesap), `journal_entries`, `journal_entry_lines`, `account_corrections` (değiştirilemez öğrenme kaydı). Hepsi RLS altında.

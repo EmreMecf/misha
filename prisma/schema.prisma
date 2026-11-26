@@ -125,6 +125,10 @@ model Organization {
   journalEntries  JournalEntry[]
   journalLines    JournalEntryLine[]
   corrections     AccountCorrection[]
+  bankAccounts    BankAccount[]
+  bankStatements  BankStatement[]
+  bankTxns        BankTransaction[]
+  bankRules       BankRule[]
 
   @@map("organizations")
 }
@@ -182,16 +186,20 @@ model Taxpayer {
   updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
   createdBy      String?      @map("created_by") @db.Uuid
 
-  organization  Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  assignments   TaxpayerAssignment[]
-  fiscalPeriods FiscalPeriod[]
-  documents     Document[]
-  invoices      Invoice[]
-  accounts      LedgerAccount[]
-  roleMappings  AccountRoleMapping[]
-  postingRules  PostingRule[]
-  journal       JournalEntry[]
-  corrections   AccountCorrection[]
+  organization   Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  assignments    TaxpayerAssignment[]
+  fiscalPeriods  FiscalPeriod[]
+  documents      Document[]
+  invoices       Invoice[]
+  accounts       LedgerAccount[]
+  roleMappings   AccountRoleMapping[]
+  postingRules   PostingRule[]
+  journal        JournalEntry[]
+  corrections    AccountCorrection[]
+  bankAccounts   BankAccount[]
+  bankStatements BankStatement[]
+  bankTxns       BankTransaction[]
+  bankRules      BankRule[]
 
   @@unique([organizationId, taxId])
   @@index([organizationId, status])
@@ -346,6 +354,7 @@ model Document {
   extractions  DocumentExtraction[]
   invoice      Invoice?
   journal      JournalEntry[]
+  bankMatches  BankTransaction[]
 
   @@index([taxpayerId, status])
   @@index([taxpayerId, sha256])
@@ -527,6 +536,8 @@ model LedgerAccount {
   roleMappings AccountRoleMapping[]
   postingRules PostingRule[]
   lines        JournalEntryLine[]   @relation("LineAccount")
+  bankAccounts BankAccount[]        @relation("BankLedgerAccount")
+  bankRules    BankRule[]           @relation("BankRuleAccount")
 
   @@unique([taxpayerId, code])
   @@map("ledger_accounts")
@@ -618,14 +629,15 @@ model JournalEntry {
   createdAt         DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt         DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  organization Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  taxpayer     Taxpayer            @relation(fields: [taxpayerId], references: [id], onDelete: Cascade)
-  fiscalPeriod FiscalPeriod        @relation(fields: [fiscalPeriodId], references: [id], onDelete: Restrict)
-  document     Document?           @relation(fields: [documentId], references: [id], onDelete: SetNull)
-  reversalOf   JournalEntry?       @relation("Reversal", fields: [reversalOfId], references: [id], onDelete: Restrict)
-  reversedBy   JournalEntry?       @relation("Reversal")
-  lines        JournalEntryLine[]
-  corrections  AccountCorrection[]
+  organization    Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  taxpayer        Taxpayer            @relation(fields: [taxpayerId], references: [id], onDelete: Cascade)
+  fiscalPeriod    FiscalPeriod        @relation(fields: [fiscalPeriodId], references: [id], onDelete: Restrict)
+  document        Document?           @relation(fields: [documentId], references: [id], onDelete: SetNull)
+  reversalOf      JournalEntry?       @relation("Reversal", fields: [reversalOfId], references: [id], onDelete: Restrict)
+  reversedBy      JournalEntry?       @relation("Reversal")
+  lines           JournalEntryLine[]
+  corrections     AccountCorrection[]
+  bankTransaction BankTransaction?
 
   @@unique([fiscalPeriodId, entryNo])
   @@index([taxpayerId, status, entryDate])
@@ -682,4 +694,144 @@ model AccountCorrection {
 
   @@index([taxpayerId, counterpartyTaxId])
   @@map("account_corrections")
+}
+
+// =====================================================================
+// Faz 4 — Banka ekstresi ve mutabakat
+// =====================================================================
+
+/// Mükellefin banka hesabı; hareketleri muhasebede bu defter hesabına (ör. 102.01) işlenir.
+model BankAccount {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId  String   @map("organization_id") @db.Uuid
+  taxpayerId      String   @map("taxpayer_id") @db.Uuid
+  name            String   @db.VarChar(120)
+  bankName        String?  @map("bank_name") @db.VarChar(120)
+  iban            String?  @db.VarChar(34)
+  currency        String   @default("TRY") @db.Char(3)
+  ledgerAccountId String   @map("ledger_account_id") @db.Uuid
+  isActive        Boolean  @default(true) @map("is_active")
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization  Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  taxpayer      Taxpayer          @relation(fields: [taxpayerId], references: [id], onDelete: Cascade)
+  ledgerAccount LedgerAccount     @relation("BankLedgerAccount", fields: [ledgerAccountId], references: [id], onDelete: Restrict)
+  statements    BankStatement[]
+  transactions  BankTransaction[]
+
+  @@unique([taxpayerId, name])
+  @@index([ledgerAccountId])
+  @@map("bank_accounts")
+}
+
+enum BalanceCheck {
+  OK // Her satırda önceki bakiye + tutar = bakiye
+  MISMATCH // En az bir satırda tutmadı
+  NO_BALANCE // Ekstrede bakiye sütunu yok
+}
+
+model BankStatement {
+  id             String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  taxpayerId     String       @map("taxpayer_id") @db.Uuid
+  bankAccountId  String       @map("bank_account_id") @db.Uuid
+  fileName       String       @map("file_name") @db.VarChar(255)
+  sha256         String       @db.Char(64)
+  format         String       @db.VarChar(10) // CSV | XLSX
+  periodStart    DateTime     @map("period_start") @db.Date
+  periodEnd      DateTime     @map("period_end") @db.Date
+  openingBalance Decimal?     @map("opening_balance") @db.Decimal(18, 2)
+  closingBalance Decimal?     @map("closing_balance") @db.Decimal(18, 2)
+  rowCount       Int          @map("row_count")
+  importedCount  Int          @map("imported_count")
+  duplicateCount Int          @map("duplicate_count")
+  balanceCheck   BalanceCheck @map("balance_check")
+  // Kullanılan sütun eşlemesi ve bulgular (bakiye uyuşmazlıkları, süreklilik uyarısı)
+  mapping        Json
+  findings       Json         @default("[]")
+  createdBy      String?      @map("created_by") @db.Uuid
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  taxpayer     Taxpayer          @relation(fields: [taxpayerId], references: [id], onDelete: Cascade)
+  bankAccount  BankAccount       @relation(fields: [bankAccountId], references: [id], onDelete: Cascade)
+  transactions BankTransaction[]
+
+  @@unique([bankAccountId, sha256])
+  @@index([bankAccountId, periodEnd])
+  @@map("bank_statements")
+}
+
+enum BankTransactionStatus {
+  UNMATCHED // Bekliyor
+  MATCHED // Fişe bağlandı
+  IGNORED // Kullanıcı yok saydı (ör. başka yerde işlenen virman)
+}
+
+model BankTransaction {
+  id                String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId    String                @map("organization_id") @db.Uuid
+  taxpayerId        String                @map("taxpayer_id") @db.Uuid
+  bankAccountId     String                @map("bank_account_id") @db.Uuid
+  statementId       String                @map("statement_id") @db.Uuid
+  rowNo             Int                   @map("row_no")
+  txDate            DateTime              @map("tx_date") @db.Date
+  valueDate         DateTime?             @map("value_date") @db.Date
+  description       String                @db.VarChar(500)
+  reference         String?               @db.VarChar(100)
+  // İşaretli tutar: + hesaba giriş, − hesaptan çıkış
+  amount            Decimal               @db.Decimal(18, 2)
+  balance           Decimal?              @db.Decimal(18, 2)
+  // Mükerrer aktarım engeli: tarih|tutar|açıklama|bakiye|referans|dosya içi sıra
+  fingerprint       String                @db.Char(64)
+  status            BankTransactionStatus @default(UNMATCHED)
+  matchedDocumentId String?               @map("matched_document_id") @db.Uuid
+  journalEntryId    String?               @unique @map("journal_entry_id") @db.Uuid
+  matchReason       String?               @map("match_reason") @db.VarChar(500)
+  matchedBy         String?               @map("matched_by") @db.Uuid
+  matchedAt         DateTime?             @map("matched_at") @db.Timestamptz(6)
+  createdAt         DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime              @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization    Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  taxpayer        Taxpayer      @relation(fields: [taxpayerId], references: [id], onDelete: Cascade)
+  bankAccount     BankAccount   @relation(fields: [bankAccountId], references: [id], onDelete: Cascade)
+  statement       BankStatement @relation(fields: [statementId], references: [id], onDelete: Cascade)
+  matchedDocument Document?     @relation(fields: [matchedDocumentId], references: [id], onDelete: SetNull)
+  journalEntry    JournalEntry? @relation(fields: [journalEntryId], references: [id], onDelete: SetNull)
+
+  @@unique([bankAccountId, fingerprint])
+  @@index([bankAccountId, status, txDate])
+  @@index([statementId])
+  @@index([matchedDocumentId])
+  @@map("bank_transactions")
+}
+
+enum BankRuleDirection {
+  IN
+  OUT
+  ANY
+}
+
+/// Açıklama anahtar kelimesi → hesap (ör. "EFT ÜCRETİ" → 780). Kullanıcının sınıflandırmasından öğrenilir.
+model BankRule {
+  id             String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String            @map("organization_id") @db.Uuid
+  taxpayerId     String            @map("taxpayer_id") @db.Uuid
+  keyword        String            @db.VarChar(100)
+  direction      BankRuleDirection @default(ANY)
+  accountId      String            @map("account_id") @db.Uuid
+  isActive       Boolean           @default(true) @map("is_active")
+  createdBy      String?           @map("created_by") @db.Uuid
+  createdAt      DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  taxpayer     Taxpayer      @relation(fields: [taxpayerId], references: [id], onDelete: Cascade)
+  account      LedgerAccount @relation("BankRuleAccount", fields: [accountId], references: [id], onDelete: Restrict)
+
+  @@unique([taxpayerId, keyword, direction])
+  @@index([accountId])
+  @@map("bank_rules")
 }

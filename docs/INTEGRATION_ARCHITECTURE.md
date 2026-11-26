@@ -28,3 +28,10 @@ Dosya tabanlı hedefler (Excel/CSV/XML) için connect/authenticate işlemsizdir;
 - Aktarılan kayıt işaretlenir; aynı kayıt ikinci kez aktarılamaz (mükerrer engeli), aktarım geri alınabilir.
 - Doğrulanmamış entegrasyon arayüzde "Geliştirme aşamasında" görünür.
 - Masaüstü ajanı (gerekirse): cihaz eşleştirme, şifreli bağlantı, aktarım kuyruğu, önizleme, imzalı güncellemeler.
+
+## Banka ekstresi (Faz 4 — uygulandı, çekirdek)
+
+- Bankaya özel adaptör yok: CSV/XLSX başlıktan sütun tahmini + kullanıcı eşlemesi. Kullanılan eşleme ekstre kaydında saklanır.
+- Bir banka ancak gerçek bir örnek ekstresiyle doğrulandıktan sonra "destekleniyor" olarak listelenebilir (şu an hiçbiri).
+- PDF ekstre: metin tabanlı PDF ayrıştırma için kütüphane seçimi ve lisans onayı gerekiyor; şimdilik açık hata mesajıyla reddedilir.
+- Açık bankacılık / API entegrasyonu: dış servis ve kimlik bilgisi gerektirir, kullanıcı onayı olmadan yapılmaz.
