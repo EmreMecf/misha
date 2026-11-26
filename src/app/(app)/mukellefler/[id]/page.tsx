@@ -47,8 +47,18 @@ async function TaxpayerDetail({ params }: { params: Promise<{ id: string }> }) {
         title={taxpayer.title}
         description={`${taxpayer.taxIdType} ${taxpayer.taxId}${taxpayer.taxOffice ? ` · ${taxpayer.taxOffice}` : ""}`}
         action={
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2">
             {taxpayer.status === "ACTIVE" ? <Badge tone="good">Aktif</Badge> : <Badge>Arşivde</Badge>}
+            {can(ctx.role, "ledger:read") && (
+              <>
+                <Link href={`/mukellefler/${taxpayer.id}/hesap-plani`} className={buttonClass.secondary}>
+                  Hesap planı
+                </Link>
+                <Link href={`/mukellefler/${taxpayer.id}/yevmiye`} className={buttonClass.secondary}>
+                  Yevmiye
+                </Link>
+              </>
+            )}
             {can(ctx.role, "document:read") && (
               <Link href={`/mukellefler/${taxpayer.id}/belgeler`} className={buttonClass.primary}>
                 Belgeler

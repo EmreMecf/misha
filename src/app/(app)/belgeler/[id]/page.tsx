@@ -8,7 +8,10 @@ import { DocumentActions } from "@/components/documents/DocumentActions";
 import { formatMoney, formatQuantity, formatRate } from "@/components/documents/format";
 import { Alert, Badge, Card, CardHeader, EmptyState, formatDate, formatDateTime, PageHeader } from "@/components/ui/primitives";
 import { DIRECTION_LABELS, FIELD_LABELS, FORMAT_LABELS, PROCESSING_STATUSES, STATUS_LABELS, STATUS_TONES, unitLabel } from "@/lib/documentLabels";
+import { JournalPanel } from "@/components/ledger/JournalPanel";
+import { toEntryView } from "@/components/ledger/journalView";
 import { getDocument } from "@/server/documents/documentService";
+import { getDocumentJournal } from "@/server/ledger/journalService";
 import { AppError } from "@/server/errors";
 import { getPageContext } from "@/server/tenancy/pageContext";
 import { can } from "@/server/tenancy/permissions";
@@ -28,6 +31,7 @@ interface Finding {
 
 const REPROCESSABLE: readonly DocumentStatus[] = ["VALIDATION_REQUIRED", "NEEDS_REVIEW", "FAILED", "REJECTED"];
 const REJECTABLE: readonly DocumentStatus[] = ["VALIDATION_REQUIRED", "NEEDS_REVIEW", "ACCOUNTING_PENDING", "FAILED"];
+const JOURNAL_STATUSES: readonly DocumentStatus[] = ["ACCOUNTING_PENDING", "APPROVED", "EXPORT_PENDING", "EXPORTING", "EXPORTED"];
 const ALERT_STATUSES: readonly DocumentStatus[] = ["VALIDATION_REQUIRED", "REJECTED", "FAILED", "DUPLICATE"];
 const MONEY_FIELDS = new Set(["lineExtension", "taxExclusive", "taxInclusive", "payable"]);
 
@@ -64,6 +68,8 @@ async function DocumentDetail({ params }: { params: Promise<{ id: string }> }) {
   const validation = (doc.extraction?.validation ?? { errors: [], warnings: [] }) as unknown as { errors: Finding[]; warnings: Finding[] };
   const inv = doc.invoice;
   const canReview = can(ctx.role, "document:review");
+  // Muhasebe fişi: kontrol edilmiş (veya sonrasındaki) faturalar için
+  const journal = inv && can(ctx.role, "ledger:read") && JOURNAL_STATUSES.includes(doc.status) ? await getDocumentJournal(ctx, doc.id) : null;
   const fileUrl = `/api/v1/documents/${doc.id}/file`;
   const hasFile = Boolean(doc.storageKey || doc.duplicateOfId);
 
@@ -200,6 +206,22 @@ async function DocumentDetail({ params }: { params: Promise<{ id: string }> }) {
           </Card>
         </div>
       </div>
+
+      {journal && (
+        <Card>
+          <JournalPanel
+            documentId={doc.id}
+            taxpayerId={journal.taxpayerId}
+            documentStatus={journal.documentStatus}
+            entries={journal.entries.map(toEntryView)}
+            accounts={journal.accounts}
+            hasChart={journal.hasChart}
+            canEdit={can(ctx.role, "journal:edit")}
+            canPost={can(ctx.role, "journal:post")}
+            canManageChart={can(ctx.role, "ledger:manage")}
+          />
+        </Card>
+      )}
 
       {inv && (
         <Card>

@@ -119,6 +119,12 @@ model Organization {
   invoices        Invoice[]
   invoiceLines    InvoiceLine[]
   invoiceTaxes    InvoiceTax[]
+  ledgerAccounts  LedgerAccount[]
+  roleMappings    AccountRoleMapping[]
+  postingRules    PostingRule[]
+  journalEntries  JournalEntry[]
+  journalLines    JournalEntryLine[]
+  corrections     AccountCorrection[]
 
   @@map("organizations")
 }
@@ -181,6 +187,11 @@ model Taxpayer {
   fiscalPeriods FiscalPeriod[]
   documents     Document[]
   invoices      Invoice[]
+  accounts      LedgerAccount[]
+  roleMappings  AccountRoleMapping[]
+  postingRules  PostingRule[]
+  journal       JournalEntry[]
+  corrections   AccountCorrection[]
 
   @@unique([organizationId, taxId])
   @@index([organizationId, status])
@@ -215,9 +226,10 @@ model FiscalPeriod {
   updatedAt      DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
   createdBy      String?            @map("created_by") @db.Uuid
 
-  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  taxpayer     Taxpayer     @relation(fields: [taxpayerId], references: [id], onDelete: Cascade)
+  organization Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  taxpayer     Taxpayer       @relation(fields: [taxpayerId], references: [id], onDelete: Cascade)
   documents    Document[]
+  journal      JournalEntry[]
 
   @@unique([taxpayerId, name])
   @@index([taxpayerId, startDate])
@@ -333,6 +345,7 @@ model Document {
   events       DocumentStatusEvent[]
   extractions  DocumentExtraction[]
   invoice      Invoice?
+  journal      JournalEntry[]
 
   @@index([taxpayerId, status])
   @@index([taxpayerId, sha256])
@@ -491,4 +504,182 @@ model Job {
 
   @@index([status, runAfter])
   @@map("jobs")
+}
+
+// =====================================================================
+// Faz 3 — Muhasebe motoru
+// =====================================================================
+
+/// Mükellefe özel hesap planı. TDHP ana hesapları şablondur; ofis alt hesap açar (ör. 320.01.001).
+model LedgerAccount {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  taxpayerId     String   @map("taxpayer_id") @db.Uuid
+  code           String   @db.VarChar(30)
+  name           String   @db.VarChar(200)
+  isPostable     Boolean  @default(true) @map("is_postable")
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  taxpayer     Taxpayer             @relation(fields: [taxpayerId], references: [id], onDelete: Cascade)
+  roleMappings AccountRoleMapping[]
+  postingRules PostingRule[]
+  lines        JournalEntryLine[]   @relation("LineAccount")
+
+  @@unique([taxpayerId, code])
+  @@map("ledger_accounts")
+}
+
+/// Fiş satırı rolleri: kural motoru rolü mükellefin hesabına çözer.
+enum AccountRole {
+  PURCHASE_DEFAULT // Alış: mal/gider varsayılan hesabı (işletmeye göre değişir, ofis seçer)
+  INPUT_VAT // İndirilecek KDV
+  SUPPLIER // Satıcılar
+  VAT_WITHHOLDING // Alışta sorumlu sıfatıyla ödenecek KDV tevkifatı
+  SALES_REVENUE // Yurt içi satışlar
+  OUTPUT_VAT // Hesaplanan KDV
+  CUSTOMER // Alıcılar
+  SALES_RETURN // Satıştan iadeler
+}
+
+model AccountRoleMapping {
+  id             String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String      @map("organization_id") @db.Uuid
+  taxpayerId     String      @map("taxpayer_id") @db.Uuid
+  role           AccountRole
+  accountId      String      @map("account_id") @db.Uuid
+  updatedAt      DateTime    @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  taxpayer     Taxpayer      @relation(fields: [taxpayerId], references: [id], onDelete: Cascade)
+  account      LedgerAccount @relation(fields: [accountId], references: [id], onDelete: Restrict)
+
+  @@unique([taxpayerId, role])
+  @@index([accountId])
+  @@map("account_role_mappings")
+}
+
+/// Mükellefe özel kesin kural: bu karşı taraftan gelen (yöndeki) faturanın ana satırı bu hesaba.
+model PostingRule {
+  id                String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId    String           @map("organization_id") @db.Uuid
+  taxpayerId        String           @map("taxpayer_id") @db.Uuid
+  counterpartyTaxId String           @map("counterparty_tax_id") @db.VarChar(11)
+  counterpartyName  String?          @map("counterparty_name") @db.VarChar(255)
+  direction         InvoiceDirection
+  accountId         String           @map("account_id") @db.Uuid
+  isActive          Boolean          @default(true) @map("is_active")
+  createdBy         String?          @map("created_by") @db.Uuid
+  createdAt         DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  taxpayer     Taxpayer      @relation(fields: [taxpayerId], references: [id], onDelete: Cascade)
+  account      LedgerAccount @relation(fields: [accountId], references: [id], onDelete: Restrict)
+
+  @@unique([taxpayerId, counterpartyTaxId, direction])
+  @@index([accountId])
+  @@map("posting_rules")
+}
+
+enum JournalEntryStatus {
+  DRAFT // Öneri / düzenleniyor
+  POSTED // Kesinleşti (değiştirilemez)
+  REVERSED // Ters kayıtla iptal edildi
+}
+
+model JournalEntry {
+  id                String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId    String             @map("organization_id") @db.Uuid
+  taxpayerId        String             @map("taxpayer_id") @db.Uuid
+  fiscalPeriodId    String             @map("fiscal_period_id") @db.Uuid
+  documentId        String?            @map("document_id") @db.Uuid
+  reversalOfId      String?            @unique @map("reversal_of_id") @db.Uuid
+  // Yevmiye numarası: kesinleşirken dönem içinde sırayla verilir
+  entryNo           Int?               @map("entry_no")
+  entryDate         DateTime           @map("entry_date") @db.Date
+  description       String             @db.VarChar(500)
+  status            JournalEntryStatus @default(DRAFT)
+  source            String             @db.VarChar(20) // RULE_ENGINE | MANUAL | REVERSAL
+  direction         InvoiceDirection?
+  counterpartyTaxId String?            @map("counterparty_tax_id") @db.VarChar(11)
+  counterpartyName  String?            @map("counterparty_name") @db.VarChar(255)
+  // Kesinleşirken veritabanı tetikleyicisi hesaplar
+  totalDebit        Decimal            @default(0) @map("total_debit") @db.Decimal(18, 2)
+  totalCredit       Decimal            @default(0) @map("total_credit") @db.Decimal(18, 2)
+  // Öneri sırasında bulunan uyarı/hatalar: [{ code, message, severity }]
+  findings          Json               @default("[]")
+  createdBy         String?            @map("created_by") @db.Uuid
+  postedBy          String?            @map("posted_by") @db.Uuid
+  postedAt          DateTime?          @map("posted_at") @db.Timestamptz(6)
+  version           Int                @default(1)
+  createdAt         DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  taxpayer     Taxpayer            @relation(fields: [taxpayerId], references: [id], onDelete: Cascade)
+  fiscalPeriod FiscalPeriod        @relation(fields: [fiscalPeriodId], references: [id], onDelete: Restrict)
+  document     Document?           @relation(fields: [documentId], references: [id], onDelete: SetNull)
+  reversalOf   JournalEntry?       @relation("Reversal", fields: [reversalOfId], references: [id], onDelete: Restrict)
+  reversedBy   JournalEntry?       @relation("Reversal")
+  lines        JournalEntryLine[]
+  corrections  AccountCorrection[]
+
+  @@unique([fiscalPeriodId, entryNo])
+  @@index([taxpayerId, status, entryDate])
+  @@index([documentId])
+  @@index([taxpayerId, counterpartyTaxId])
+  @@map("journal_entries")
+}
+
+model JournalEntryLine {
+  id                String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId    String  @map("organization_id") @db.Uuid
+  entryId           String  @map("entry_id") @db.Uuid
+  lineNo            Int     @map("line_no")
+  // Öneride hesap çözülemediyse boş kalır; boş satırlı fiş kesinleşemez
+  accountId         String? @map("account_id") @db.Uuid
+  // Satırın fişteki görevi: MAIN (gider/gelir), VAT, COUNTERPARTY, WITHHOLDING, OTHER_TAX
+  kind              String  @db.VarChar(20)
+  debit             Decimal @default(0) @db.Decimal(18, 2)
+  credit            Decimal @default(0) @db.Decimal(18, 2)
+  description       String  @db.VarChar(300)
+  // Önerinin kaynağı ve gerekçesi (POSTING_RULE, HISTORY, ROLE_MAPPING, UNRESOLVED, USER)
+  source            String  @db.VarChar(20)
+  reason            String  @db.VarChar(500)
+  proposedAccountId String? @map("proposed_account_id") @db.Uuid
+
+  organization Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  entry        JournalEntry   @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  account      LedgerAccount? @relation("LineAccount", fields: [accountId], references: [id], onDelete: Restrict)
+
+  @@unique([entryId, lineNo])
+  @@index([accountId])
+  @@map("journal_entry_lines")
+}
+
+/// Öğrenme kaydı: kullanıcı önerilen hesabı değiştirdiğinde ne önerildi, ne seçildi.
+model AccountCorrection {
+  id                String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId    String            @map("organization_id") @db.Uuid
+  taxpayerId        String            @map("taxpayer_id") @db.Uuid
+  entryId           String            @map("entry_id") @db.Uuid
+  counterpartyTaxId String?           @map("counterparty_tax_id") @db.VarChar(11)
+  direction         InvoiceDirection?
+  lineKind          String            @map("line_kind") @db.VarChar(20)
+  proposedAccountId String?           @map("proposed_account_id") @db.Uuid
+  proposedSource    String            @map("proposed_source") @db.VarChar(20)
+  chosenAccountId   String            @map("chosen_account_id") @db.Uuid
+  ruleCreated       Boolean           @default(false) @map("rule_created")
+  createdBy         String?           @map("created_by") @db.Uuid
+  createdAt         DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  taxpayer     Taxpayer     @relation(fields: [taxpayerId], references: [id], onDelete: Cascade)
+  entry        JournalEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+
+  @@index([taxpayerId, counterpartyTaxId])
+  @@map("account_corrections")
 }

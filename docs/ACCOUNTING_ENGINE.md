@@ -39,3 +39,23 @@ Kullanıcı hesabı değiştirdiğinde ilk öneri, seçilen hesap, neden, satıc
 KDV satır sağlaması (matrah × oran ≈ KDV, kuruş toleransı), kuruş farkının en büyük satırın matrahına
 yansıtılması, binek oto %70/%30 KKEG, tevsik sınırı, perakende fişlerin 10 günlük toplu fişte birleştirilmesi.
 Oranlar ve sınırlar kodda sabit değil, vergi kural tablosundan okunacak (Faz 5).
+
+## Uygulanan durum (Faz 3 çekirdeği)
+
+Kod: `src/server/ledger/` — `proposalEngine.ts` (saf), `journalService.ts`, `chartService.ts`, `tdhpTemplate.ts`.
+
+Uygulanan karar katmanları: 1 (kesin kural), 4 (geçmiş kesin fişler, ana satırın en sık hesabı), 7 (rol eşlemesi), 10 (insan onayı).
+2, 3 (kategori kapsamlı satıcı eşleşmesi), 5, 6, 8 sonraki fazlarda.
+
+### Kayıt şablonları — mali müşavir gözden geçirmesi bekliyor
+
+| Durum | Borç | Alacak |
+|---|---|---|
+| Alış | Ana (rol: alış varsayılanı, ör. 153/770) matrah; 191 KDV; KDV dışı vergi ana hesaba (maliyete) | 320 ödenecek; 360 tevkifat |
+| Satış | 120 ödenecek | Ana (600) matrah; 391 KDV − tevkifat; KDV dışı vergi: hesap seçilir |
+| Mükellefe kesilen iade (alıcısı iade etti) | 610 matrah; 391 KDV | 120 |
+| Mükellefin kestiği iade (satıcısına iade) | 320 | Ana (alış hesabı) matrah; 191 KDV |
+
+- Alış varsayılan hesabı şablonda bilinçli olarak boş: işletmeye göre mal/gider/maliyet değişir.
+- Döviz: tutarlar faturadaki kurla TL'ye, satır başına 2 hane (yarım yukarı). Kuruş farkı otomatik dağıtılmaz.
+- Öğrenme: kesinleştirmede önerilen hesap değiştiyse `account_corrections`'a yazılır; kullanıcı isterse ana satır için `posting_rules` oluşur. Kural başka mükellefe uygulanmaz.

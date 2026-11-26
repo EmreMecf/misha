@@ -1,4 +1,4 @@
-import type { DocumentStatus, Prisma } from "@prisma/client";
+import type { DocumentStatus } from "@prisma/client";
 import { z } from "zod";
 import { AppError, notFound } from "@/server/errors";
 import { audit } from "@/server/audit/auditService";
@@ -6,8 +6,10 @@ import { enqueue } from "@/server/jobs/jobQueue";
 import { readStoredFile } from "@/server/storage/fileStorage";
 import { assertPermission, tenantScope, type RequestContext } from "@/server/tenancy/context";
 import { withTenant, type Tx } from "@/server/tenancy/tenantDb";
-import { getAccessibleTaxpayer, taxpayerVisibility } from "@/server/taxpayers/taxpayerService";
+import { getAccessibleTaxpayer } from "@/server/taxpayers/taxpayerService";
 import { PROCESS_JOB } from "./documentUploadService";
+import { getAccessibleDocument } from "./documentAccess";
+import { proposeForDocumentInTx } from "@/server/ledger/journalService";
 import { transition } from "./stateMachine";
 
 const STATUSES = [
@@ -20,17 +22,6 @@ export const listQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(50),
   cursor: z.uuid().optional(),
 });
-
-/** Belgenin erişilebilir olduğu (mükellefi görünür) kapsam. */
-const documentScope = (ctx: RequestContext): Prisma.DocumentWhereInput => ({ organizationId: ctx.organizationId, taxpayer: taxpayerVisibility(ctx) });
-
-async function getAccessibleDocument(tx: Tx, ctx: RequestContext, documentId: string) {
-  const parsed = z.uuid().safeParse(documentId);
-  if (!parsed.success) throw notFound("Belge");
-  const doc = await tx.document.findFirst({ where: { id: parsed.data, ...documentScope(ctx) } });
-  if (!doc) throw notFound("Belge");
-  return doc;
-}
 
 export async function listDocuments(ctx: RequestContext, taxpayerId: string, input: z.input<typeof listQuerySchema> = {}) {
   assertPermission(ctx, "document:read");
@@ -107,6 +98,8 @@ export function markReviewed(ctx: RequestContext, documentId: string) {
   return act(ctx, documentId, async (tx, doc) => {
     if (doc.status !== "NEEDS_REVIEW") throw new AppError("CONFLICT", "Yalnızca kontrol bekleyen belge onaylanabilir");
     await transition(tx, doc, "ACCOUNTING_PENDING", { actor: { userId: ctx.userId }, reason: "Alanlar kullanıcı tarafından kontrol edildi" });
+    // Hesap planı varsa fiş önerisi hemen hazırlanır (yoksa belge sayfasından sonra önerilir)
+    await proposeForDocumentInTx(tx, ctx, doc.id);
     return { action: "document.review", to: "ACCOUNTING_PENDING" };
   });
 }

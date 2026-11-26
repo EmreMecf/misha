@@ -17,6 +17,15 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   "document.review": "Belge kontrol edildi",
   "document.reject": "Belge reddedildi",
   "document.reprocess": "Belge yeniden işlemeye alındı",
+  "ledger.init": "Hesap planı başlatıldı",
+  "ledger.account_create": "Hesap açıldı",
+  "ledger.account_update": "Hesap güncellendi",
+  "ledger.role_mapping": "Hesap rolü değiştirildi",
+  "ledger.rule_enable": "Kural açıldı",
+  "ledger.rule_disable": "Kural kapatıldı",
+  "journal.propose": "Fiş önerildi",
+  "journal.post": "Fiş kesinleşti",
+  "journal.reverse": "Fiş ters kayıtla iptal edildi",
 };
 
 export const auditLabel = (action: string) => AUDIT_ACTION_LABELS[action] ?? action;
