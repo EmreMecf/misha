@@ -1,0 +1,29 @@
+# Geliştirme veritabanı. Eski projenin konteyneri/verisiyle (mihsap-postgres, 5433) çakışmaması için
+# ayrı proje adı, konteyner, port ve veri birimi kullanılır.
+name: mihsap-platform
+
+services:
+  db:
+    image: postgres:17-alpine
+    container_name: mihsap-platform-db
+    ports:
+      - "5434:5432"
+    environment:
+      POSTGRES_DB: mihsap
+      POSTGRES_USER: mihsap_admin
+      POSTGRES_PASSWORD: ${DB_ADMIN_PASSWORD:-mihsap_admin_dev}
+      # Uygulama rolü (RLS'yi atlayamaz); docker/initdb betiği oluşturur
+      APP_DB_USER: mihsap_app
+      APP_DB_PASSWORD: ${DB_APP_PASSWORD:-mihsap_app_dev}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./docker/initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mihsap_admin -d mihsap"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  pgdata:
+    name: mihsap_platform_pgdata

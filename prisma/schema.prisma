@@ -1,0 +1,235 @@
+// MİHSAP platformu — PostgreSQL veri modeli. Kurallar: docs/DATABASE_ARCHITECTURE.md
+// Kiracı tablolarında organization_id + RLS (politikalar migration SQL'inde).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  // Uygulama kısıtlı rolle bağlanır (RLS uygulanır); migration'lar yönetici rolüyle.
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_DATABASE_URL")
+}
+
+enum UserStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum Role {
+  OFFICE_OWNER
+  ACCOUNTANT
+  STAFF
+  AUDITOR
+  TAXPAYER_USER
+  READ_ONLY
+}
+
+enum LedgerType {
+  BILANCO
+  ISLETME
+  SERBEST_MESLEK
+}
+
+enum TaxIdType {
+  VKN
+  TCKN
+}
+
+enum RecordStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+enum FiscalPeriodStatus {
+  OPEN
+  CLOSED
+}
+
+// ---- Kimlik (kiracı dışı) ----
+
+model User {
+  id                 String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email              String     @unique @db.VarChar(320) // her zaman küçük harf
+  fullName           String     @map("full_name") @db.VarChar(200)
+  passwordHash       String     @map("password_hash")
+  status             UserStatus @default(ACTIVE)
+  mustChangePassword Boolean    @default(false) @map("must_change_password")
+  isSuperAdmin       Boolean    @default(false) @map("is_super_admin")
+  createdAt          DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  sessions    Session[]
+  memberships Membership[]
+
+  @@map("users")
+}
+
+model Session {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  // Token'ın SHA-256 özeti (hex); token'ın kendisi saklanmaz
+  tokenHash      String    @unique @map("token_hash") @db.Char(64)
+  userId         String    @map("user_id") @db.Uuid
+  organizationId String?   @map("organization_id") @db.Uuid
+  ipAddress      String?   @map("ip_address") @db.VarChar(64)
+  userAgent      String?   @map("user_agent") @db.VarChar(300)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  lastSeenAt     DateTime  @default(now()) @map("last_seen_at") @db.Timestamptz(6)
+  expiresAt      DateTime  @map("expires_at") @db.Timestamptz(6)
+  revokedAt      DateTime? @map("revoked_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+model LoginAttempt {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email     String   @db.VarChar(320)
+  ipAddress String?  @map("ip_address") @db.VarChar(64)
+  success   Boolean
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([email, createdAt])
+  @@index([ipAddress, createdAt])
+  @@map("login_attempts")
+}
+
+// ---- Kiracı (RLS) ----
+
+model Organization {
+  id        String       @id @db.Uuid // uygulama üretir (RLS bağlamı oluşturmadan önce gerekir)
+  name      String       @db.VarChar(255)
+  taxId     String?      @map("tax_id") @db.VarChar(11)
+  status    RecordStatus @default(ACTIVE)
+  createdAt DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  branches          Branch[]
+  memberships       Membership[]
+  taxpayers         Taxpayer[]
+  taxpayerAssigns   TaxpayerAssignment[]
+  fiscalPeriods     FiscalPeriod[]
+  auditLogs         AuditLog[]
+
+  @@map("organizations")
+}
+
+model Branch {
+  id             String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  name           String       @db.VarChar(200)
+  status         RecordStatus @default(ACTIVE)
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  memberships  Membership[]
+
+  @@unique([organizationId, name])
+  @@map("branches")
+}
+
+model Membership {
+  id             String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  userId         String       @map("user_id") @db.Uuid
+  role           Role
+  branchId       String?      @map("branch_id") @db.Uuid
+  status         RecordStatus @default(ACTIVE)
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy      String?      @map("created_by") @db.Uuid
+
+  organization Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  branch       Branch?              @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  assignments  TaxpayerAssignment[]
+
+  @@unique([organizationId, userId])
+  @@index([userId])
+  @@map("memberships")
+}
+
+model Taxpayer {
+  id             String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  title          String       @db.VarChar(255)
+  taxIdType      TaxIdType    @map("tax_id_type")
+  taxId          String       @map("tax_id") @db.VarChar(11)
+  taxOffice      String?      @map("tax_office") @db.VarChar(120)
+  naceCode       String?      @map("nace_code") @db.VarChar(10)
+  activity       String?      @db.VarChar(255)
+  ledgerType     LedgerType   @default(BILANCO) @map("ledger_type")
+  address        String?      @db.VarChar(500)
+  status         RecordStatus @default(ACTIVE)
+  version        Int          @default(1)
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy      String?      @map("created_by") @db.Uuid
+
+  organization  Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  assignments   TaxpayerAssignment[]
+  fiscalPeriods FiscalPeriod[]
+
+  @@unique([organizationId, taxId])
+  @@index([organizationId, status])
+  @@map("taxpayers")
+}
+
+model TaxpayerAssignment {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  taxpayerId     String   @map("taxpayer_id") @db.Uuid
+  membershipId   String   @map("membership_id") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  createdBy      String?  @map("created_by") @db.Uuid
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  taxpayer     Taxpayer     @relation(fields: [taxpayerId], references: [id], onDelete: Cascade)
+  membership   Membership   @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+
+  @@unique([taxpayerId, membershipId])
+  @@map("taxpayer_assignments")
+}
+
+model FiscalPeriod {
+  id             String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String             @map("organization_id") @db.Uuid
+  taxpayerId     String             @map("taxpayer_id") @db.Uuid
+  name           String             @db.VarChar(50) // ör. "2026"
+  startDate      DateTime           @map("start_date") @db.Date
+  endDate        DateTime           @map("end_date") @db.Date
+  status         FiscalPeriodStatus @default(OPEN)
+  createdAt      DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy      String?            @map("created_by") @db.Uuid
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  taxpayer     Taxpayer     @relation(fields: [taxpayerId], references: [id], onDelete: Cascade)
+
+  @@unique([taxpayerId, name])
+  @@index([taxpayerId, startDate])
+  @@map("fiscal_periods")
+}
+
+model AuditLog {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  actorUserId    String?  @map("actor_user_id") @db.Uuid
+  action         String   @db.VarChar(80) // ör. "taxpayer.create"
+  resourceType   String   @map("resource_type") @db.VarChar(60)
+  resourceId     String?  @map("resource_id") @db.VarChar(64)
+  taxpayerId     String?  @map("taxpayer_id") @db.Uuid
+  // Değişiklik özeti; parola/token/tam kimlik numarası yazılmaz
+  details        Json?
+  ipAddress      String?  @map("ip_address") @db.VarChar(64)
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, createdAt])
+  @@map("audit_logs")
+}

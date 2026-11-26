@@ -1,0 +1,11 @@
+import { defineConfig } from "vitest/config";
+import path from "node:path";
+
+// Birim testleri: veritabanı gerektirmez.
+export default defineConfig({
+  resolve: { alias: { "@": path.resolve(__dirname, "src") } },
+  test: {
+    include: ["src/**/*.test.ts"],
+    exclude: ["src/**/*.integration.test.ts", "node_modules/**"],
+  },
+});
